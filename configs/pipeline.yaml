@@ -1,0 +1,33 @@
+# Seuils par défaut de la matrice algorithmique v2.
+# Aucun de ces réglages n'est obligatoire : le CLI et la webapp les utilisent tels quels.
+candidats:
+  cos_min: 0.25
+  # Règle automatique documentée : si le seuil fixe retient moins de
+  # min_paires candidats, on retombe sur le percentile `fallback_percentile`
+  # des cosinus observés (jamais de question à l'utilisateur).
+  auto_calibrage: true
+  min_paires: 12
+  fallback_percentile: 0.98
+  cos_plancher: 0.10
+relations:
+  sans_rapport_max: 0.08
+  bande_grise: [0.35, 0.65]
+  concurrence: 8
+clustering:
+  confiance_min: 0.5
+  min_livres: 2
+publication:
+  confiance_min: 0.60
+  min_sources: 2
+paliers:
+  P3: 2
+  P4: 3
+  P5: 5
+extraction:
+  min_words: 8
+  min_chars: 40
+  max_chars: 400
+  par_chapitre: 4
+  max_claims_par_livre: 40
+embeddings:
+  dim: 256
