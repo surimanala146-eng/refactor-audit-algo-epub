@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Matrice algorithmique v2 — déposer, lancer, résultat</title>
+<style>
+  :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--fg:#e8ecf3;--mut:#9aa4b6;--acc:#4f8cff;--ok:#39d98a;--err:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+  main{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:26px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 28px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px}
+  #drop{border:2px dashed #39415a;border-radius:14px;padding:38px 18px;text-align:center;cursor:pointer;transition:.15s}
+  #drop.hot{border-color:var(--acc);background:#1b2233}
+  #drop b{color:var(--acc)}
+  #files{color:var(--mut);font-size:14px;margin-top:12px;max-height:130px;overflow:auto}
+  button{font:inherit;border:0;border-radius:10px;padding:14px 26px;background:var(--acc);color:#fff;cursor:pointer;font-weight:600}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.ghost{background:#222835;color:var(--fg);padding:9px 16px;font-weight:500}
+  .bar{height:12px;background:#0b0d12;border-radius:999px;overflow:hidden;margin:14px 0}
+  .bar>div{height:100%;width:0;background:linear-gradient(90deg,#4f8cff,#39d98a);transition:width .25s}
+  .phases{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .ph{font-size:12px;padding:4px 9px;border-radius:999px;background:#1f2430;color:var(--mut)}
+  .ph.run{background:#1d3357;color:#bcd4ff}.ph.done{background:#163a2b;color:var(--ok)}
+  pre#log{background:#0b0d12;border-radius:10px;padding:12px;max-height:210px;overflow:auto;font-size:12.5px;color:#b9c3d6;margin:0}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--mut);font-weight:600}
+  .kpi{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+  .kpi div{background:#0b0d12;border-radius:10px;padding:10px 14px;min-width:120px}
+  .kpi span{display:block;color:var(--mut);font-size:12px}
+  .kpi b{font-size:20px}
+  details{margin-top:10px}summary{cursor:pointer;color:var(--mut)}
+  .md{background:#0b0d12;border-radius:10px;padding:14px;white-space:pre-wrap;font-size:13.5px;max-height:340px;overflow:auto}
+  .hide{display:none}
+  .err{color:var(--err)}
+  a{color:var(--acc)}
+  footer{color:var(--mut);font-size:12.5px;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Matrice algorithmique v2</h1>
+  <p class="sub">Déposez vos livres, cliquez une fois. Aucune question, aucune autre page.</p>
+
+  <section>
+    <div id="drop" tabindex="0" role="button" aria-label="Déposer les livres">
+      <div>Glissez vos fichiers ici, ou <b>cliquez pour choisir</b></div>
+      <div style="color:var(--mut);font-size:13px;margin-top:6px">.txt · .md · .epub · .pdf — un dossier entier est accepté</div>
+      <input id="picker" type="file" multiple webkitdirectory="" class="hide" />
+      <input id="picker2" type="file" multiple class="hide" />
+      <div id="files"></div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:18px;flex-wrap:wrap">
+      <button id="go" disabled>Lancer</button>
+      <span id="hint" style="color:var(--mut)">Aucun livre sélectionné.</span>
+    </div>
+  </section>
+
+  <section id="progress" class="hide" aria-live="polite">
+    <div class="phases" id="phases"></div>
+    <div class="bar"><div id="fill"></div></div>
+    <div id="status" style="color:var(--mut);margin-bottom:10px">…</div>
+    <pre id="log"></pre>
+  </section>
+
+  <section id="results" class="hide">
+    <div class="kpi" id="kpi"></div>
+    <div id="cards"></div>
+    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+      <a id="zip" class="ghost" style="display:inline-block;padding:9px 16px;border-radius:10px;background:#222835;text-decoration:none">Télécharger export.zip</a>
+      <button class="ghost" id="again">Nouveau corpus</button>
+    </div>
+    <details><summary>manifest.json</summary><pre class="md" id="manifest"></pre></details>
+    <footer id="autorules"></footer>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let chosen = [], PHASES = [];
+
+fetch('api/health').then(r=>r.json()).then(h=>{
+  PHASES = h.phases;
+  $('#phases').innerHTML = PHASES.map(p=>`<span class="ph" data-p="${p}">${p}</span>`).join('');
+  $('#autorules').innerHTML = 'Règles automatiques appliquées sans intervention humaine :<br>· ' + h.regles_automatiques.join('<br>· ');
+});
+
+const drop = $('#drop');
+drop.addEventListener('click', e => { if(e.target.tagName!=='INPUT') $('#picker2').click(); });
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('hot'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('hot'));
+drop.addEventListener('drop', async e => {
+  e.preventDefault(); drop.classList.remove('hot');
+  const out = [];
+  const items = [...(e.dataTransfer.items||[])].map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);
+  if(items.length){ for(const it of items) await walk(it, out); }
+  else out.push(...e.dataTransfer.files);
+  setFiles(out);
+});
+function walk(entry, out){
+  return new Promise(res=>{
+    if(entry.isFile) entry.file(f=>{out.push(f);res();});
+    else if(entry.isDirectory){
+      const rd = entry.createReader();
+      rd.readEntries(async ents=>{ for(const e of ents) await walk(e,out); res(); });
+    } else res();
+  });
+}
+['#picker','#picker2'].forEach(s=>$(s).addEventListener('change', e=>setFiles([...e.target.files])));
+function setFiles(list){
+  chosen = list.filter(f=>/\.(txt|md|epub|pdf)$/i.test(f.name));
+  $('#files').textContent = chosen.length ? chosen.map(f=>f.name).join(' · ') : '';
+  $('#go').disabled = chosen.length === 0;
+  $('#hint').textContent = chosen.length ? chosen.length + ' livre(s) prêt(s).' : 'Aucun livre sélectionné.';
+}
+
+$('#again').onclick = () => location.reload();
+
+$('#go').onclick = async () => {
+  $('#go').disabled = true;
+  $('#progress').classList.remove('hide');
+  $('#results').classList.add('hide');
+  $('#log').textContent = '';
+  const fd = new FormData();
+  chosen.forEach(f => fd.append('files', f, f.name));
+  const r = await fetch('api/run', {method:'POST', body:fd});
+  if(!r.ok){ $('#status').innerHTML = '<span class="err">'+(await r.text())+'</span>'; $('#go').disabled=false; return; }
+  const {run_id} = await r.json();
+  listen(run_id);
+};
+
+function listen(runId){
+  const es = new EventSource(`api/run/${runId}/events`);
+  let seen = new Set();
+  es.onmessage = ev => {
+    const d = JSON.parse(ev.data);
+    if(d.type === 'progress'){
+      $('#fill').style.width = (d.progress*100).toFixed(1)+'%';
+      $('#status').textContent = d.phase + ' — ' + d.message;
+      seen.add(d.phase);
+      document.querySelectorAll('.ph').forEach(el=>{
+        const i = PHASES.indexOf(el.dataset.p), j = PHASES.indexOf(d.phase);
+        el.className = 'ph' + (i<j||d.progress===1&&i===j ? ' done' : i===j ? ' run' : '');
+      });
+      const log = $('#log'); log.textContent += d.phase+': '+d.message+'\n'; log.scrollTop = log.scrollHeight;
+    } else if(d.type === 'final'){
+      es.close();
+      if(d.status === 'done'){ $('#fill').style.width='100%'; $('#status').textContent='Terminé.'; show(runId); }
+      else { $('#status').innerHTML = '<span class="err">Échec : '+(d.error||'')+'</span>'; $('#go').disabled=false; }
+    }
+  };
+  es.onerror = () => { es.close(); poll(runId); };
+}
+async function poll(runId){
+  const t = setInterval(async ()=>{
+    const s = await (await fetch(`api/run/${runId}`)).json();
+    $('#fill').style.width = (s.progress*100).toFixed(1)+'%';
+    $('#status').textContent = s.phase;
+    if(s.status === 'done'){ clearInterval(t); show(runId); }
+    if(s.status === 'failed'){ clearInterval(t); $('#status').innerHTML='<span class="err">Échec : '+s.error+'</span>'; }
+  }, 2000);
+}
+
+async function show(runId){
+  const d = await (await fetch(`api/run/${runId}/result`)).json();
+  const c = d.manifest.compteurs;
+  $('#kpi').innerHTML = [
+    ['Livres', c.livres], ['Propositions', c.propositions], ['Candidats', c.candidats],
+    ['Relations', c.relations], ['Fiches publiées', c.fiches_publiees], ['Éliminées', c.fiches_eliminees]
+  ].map(([k,v])=>`<div><span>${k}</span><b>${v}</b></div>`).join('');
+  if(d.cards.length){
+    $('#cards').innerHTML = '<table><thead><tr><th>Palier</th><th>Famille</th><th>Sources</th><th>Fiche</th></tr></thead><tbody>'
+      + d.cards.map((x,i)=>`<tr><td>${x.palier}</td><td>${x.family}</td><td>${x.n_sources}</td>
+        <td><a href="#" data-i="${i}">${x.title}</a></td></tr>`).join('')
+      + '</tbody></table><div id="fiche"></div>';
+    $('#cards').querySelectorAll('a').forEach(a=>a.onclick=e=>{
+      e.preventDefault();
+      $('#fiche').innerHTML = '<div class="md">'+d.cards[a.dataset.i].markdown_text.replace(/[<>&]/g,m=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]))+'</div>';
+    });
+    $('#cards').querySelector('a').click();
+  } else {
+    $('#cards').innerHTML = '<p>Aucune fiche publiée : les portes de qualité ont tout éliminé. '
+      + (d.manifest.explication_zero_fiche||'') + '</p>';
+  }
+  $('#manifest').textContent = JSON.stringify(d.manifest, null, 2);
+  $('#zip').href = `api/run/${runId}/export.zip`;
+  $('#results').classList.remove('hide');
+  $('#results').scrollIntoView({behavior:'smooth'});
+}
+</script>
+</body>
+</html>
