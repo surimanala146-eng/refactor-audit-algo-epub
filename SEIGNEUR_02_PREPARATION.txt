@@ -1,0 +1,407 @@
+================================================================================
+SEIGNEUR_02 — PARTIE « PRÉPARATION / INSTALLATION »
+Projet : /home/karim/alguesss454557575  (Console — matrice algorithmique v2)
+Rédaction : kilocode-1, mission m-20260930-docs-seigneur
+Date de vérification : 2026-09-30
+Méthode : toutes les commandes ci-dessous ont été EXÉCUTÉES sur l'état réel du
+dépôt. Les sorties citées proviennent de logs/ du dossier de mission
+(/home/karim/.cccc/missions/m-20260930-docs-seigneur/logs/).
+Quand une étape n'a PAS été exécutée, c'est écrit explicitement (§10).
+Le projet a été traité en LECTURE SEULE : aucun fichier du projet n'a été
+modifié (les vérifications serveur ont été redirigées vers un workspace
+temporaire hors projet, voir §6).
+================================================================================
+
+--------------------------------------------------------------------------------
+1. PRÉREQUIS
+--------------------------------------------------------------------------------
+* Python : requires-python = ">=3.11" (pyproject.toml:9, uv.lock:3).
+  Versions constatées sur cette machine :
+    - interpréteur du virtualenv projet : Python 3.14.6  (.venv/bin/python)
+    - python3 système                   : Python 3.12.3  (/usr/bin/python3)
+  Les deux satisfont >=3.11, mais seule l'installation complète (§2) permet la
+  suite de tests : voir §8.
+* uv : détecté, version 0.11.28 (/home/karim/.local/bin/uv). C'est l'outil
+  utilisé pour construire le virtualenv du dépôt (.venv/pyvenv.cfg déclare
+  "uv = 0.11.28"). `uv venv` / `uv pip install` fonctionnent.
+* Node.js / npm : 22.23.2 / 10.9.8. OPTIONNEL — uniquement pour les scripts
+  d'interface tests/puppeteer-ui.mjs et tests/browser-ui.spec.js (§3, §10).
+  Rien du backend FastAPI ni de la suite pytest n'en dépend.
+
+--------------------------------------------------------------------------------
+2. INSTALLATION
+--------------------------------------------------------------------------------
+Depuis la racine du projet (c'est la racine de l'application : il n'existe pas
+de sous-dossier `app/`, contrairement à ce qu'indique le README §15 de ce
+fichier pour la variante sans virtualenv) :
+
+    cd /home/karim/alguesss454557575
+
+2.1 Avec uv (chemin recommandé, déjà fait sur cette machine)
+
+    uv venv
+    uv pip install -r requirements.txt
+
+    Le virtualenv déjà présent est en Python 3.14.6 et contient en plus le
+    projet lui-même en installation éditable :
+        .venv/lib/python3.14/site-packages/__editable__.matrice-v2-console-0.2.0.pth
+        uv pip list --python .venv/bin/python  ->  "matrice-v2-console 0.2.0
+                                                  /home/karim/alguesss454557575"
+    Conséquence utile : les paquets webapp/, domain/, ingestion/, extraction/,
+    retrieval/, taxonomy/, orchestration/ sont importables depuis n'importe
+    quel répertoire, sans PYTHONPATH.
+
+2.2 Installation pip classique (si uv n'est pas disponible)
+
+    python3 -m venv .venv
+    .venv/bin/pip install -U pip
+    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install -e .            # optionnel mais recommandé (§8)
+
+--------------------------------------------------------------------------------
+3. RÔLE RÉEL DE package.json / node_modules  (documenté honnêtement)
+--------------------------------------------------------------------------------
+package.json n'est PAS nécessaire au backend. C'est un fichier de bordure
+crée automatiquement lors de l'ajout du dépôt à GitHub (il reprend mot pour
+mot le résumé du README, licence ISC, dépôt d'origine). Son contenu utile :
+
+* devDependencies : "@playwright/test" ^1.55.1 et "puppeteer" ^25.12.0
+  (versions résolues 1.55.1 / 25.12.0 dans package-lock.json).
+* scripts.test : `echo "Error: no test specified" && exit 1`
+  → `npm test` ECHOUE TOUJOURS, par construction. Vérifié le 2026-09-30 :
+  exit 1, sortie "Error: no test specified". Ne pas l'utiliser comme porte de
+  qualité.
+* node_modules/ est donc l'outillage des deux scripts d'interface, rien
+  d'autre. Navigateurs déjà téléchargés sur cette machine :
+  ~/.cache/puppeteer/{chrome,chrome-headless-shell} et
+  ~/.cache/ms-playwright/{chromium-1193,chromium-1234,...}.
+* ATTENTION : les deux scripts d'interface sont OBSOLÈTES (§10, item 5). Ils
+  visent un onglet `review` qui n'existe plus dans webapp/static/index.html.
+  Le projet n'a aucun playwright.config.* : `npx playwright test` ne peut pas
+  être considéré comme une commande de projet fiable.
+* test-results/ (présent, gitignoré) contient .last-run.json = {"status":
+  "passed","failedTests":[]} : trace d'une exécution Playwright du 2026-09-29
+  qui ne correspond plus au front-end actuel.
+
+--------------------------------------------------------------------------------
+4. DÉPENDANCES — requirements.txt (13 paquets, rôle de chacun)
+--------------------------------------------------------------------------------
+requirements.txt est la liste plate effectivement installable ; pyproject.toml
+définit les mêmes dépendances en « core » + un extra [test] (§4.1).
+
+  fastapi>=0.115 ............ serveur HTTP, routage, validation (webapp/server.py)
+  uvicorn[standard]>=0.30 ... serveur ASGI ; [standard] = uvloop, httptools,
+                             websockets, watchfiles, python-dotenv, PyYAML
+  python-multipart>=0.0.9 ... parsing des envois multipart de
+                             POST /api/sources/upload. ABSENT => route 503 et
+                             2 tests ignorés (vérifié §8.2).
+  pydantic>=2.7 ............. modèles Source/Claim/Relation/Card/Score/Family
+                             (domain/models.py) et corps de requête
+  numpy>=1.26 ............... vecteurs (retrieval/vector_index.py)
+  pyyaml>=6 ................. lecture de configs/pipeline.yaml
+                             (orchestration/pipeline.py : PipelineConfig.from_yaml)
+  pytest>=8.0 ............... runner de la suite (pas de couverture)
+  httpx>=0.27 ............... client HTTP des tests + client TestClient
+                             (FastAPI TestClient s'appuie sur httpx)
+  ebooklib>=0.18 ............ extraction texte des .epub (ingestion/loader.py)
+  beautifulsoup4>=4.12 ...... nettoyage HTML issu des .epub
+  pymupdf>=1.24 ............ extraction texte des .pdf (module importé "fitz")
+  pymongo>=4.8 .............. backend vecteur MongoDB (retrieval/mongo_store.py)
+  mongomock>=0.29 ........... doublure en mémoire de pymongo pour les tests
+                             (tests/test_mongo.py, tests/test_api.py::..._mongodb)
+
+  Transitives notables réellement installées : starlette 1.7.0, anyio 4.15.1,
+  httpx 0.28.1, pydantic-core 2.46.5, numpy 2.5.3, mongomock 4.3.0,
+  pymongo 4.18.2, pymupdf 1.28.2, ebooklib 0.20, beautifulsoup4 4.15.0,
+  lxml 6.1.3, pytest 9.1.1, pyyaml 6.0.3, python-multipart 0.0.32,
+  uvicorn 0.54.0, uvloop 0.22.1, websockets 17.1.
+  ATTENTION : les bornes du requirements.txt (>=) sont largement dépassées par
+  l'état installé (pytest 9.x alors que le fichier demande >=8.0). La suite
+  passe malgré tout (§8).
+
+4.1 Dépendances optionnelles / conditionnelles (à installer ou non, selon besoin)
+  * python-multipart ....... OPTIONNEL mais fortement recommandé : sans lui,
+                             POST /api/sources/upload renvoie 503 et 2 tests
+                             sont ignorés (comportement voulu : dégradation
+                             honnête, jamais de faux 200).
+  * pymongo + mongomock .... requis pour provider=mongodb (webapp/providers.py:27
+                             -> retrieval.mongo_store.MongoVectorStore) et pour
+                             la simple COLLECTE de la suite (tests/test_mongo.py
+                             importe mongomock au niveau module).
+  * NVIDIA (provider=nvidia) : AUCUNE dépendance déclarée. providers_impl.py
+                             exige NVIDIA_API_KEY (absente -> ProviderIndisponible)
+                             et lit NVIDIA_BASE_URL (défaut dans le fichier) et
+                             NVIDIA_EXTRACTION_MODEL / NVIDIA_EMBEDDING_MODEL /
+                             NVIDIA_RELATION_MODEL / NVIDIA_SUMMARY_MODEL
+                             (webapp/providers.py:16,31,44,54). Sans ces variables,
+                             provider=nvidia échoue explicitement.
+  * LLM / API distants (LLMExtraction, EmbeddingAPI, NLIRelation) : classes
+             présentes mais marquées indisponibles (providers_impl.py:62
+             _NON_DISPO) ; tout autre provider que local/mongodb/nvidia lève une
+             erreur franche. Le mode qui marche par défaut est provider=local.
+
+--------------------------------------------------------------------------------
+5. VARIABLES D'ENVIRONNEMENT
+--------------------------------------------------------------------------------
+Source unique : webapp/settings.py (classe WebSettings, from_env() lignes 29-43).
+Le spec d'origine n'en prévoyait aucune : ce sont des surcharges ajoutées par
+l'implémentation. AUCUNE n'est requise pour démarrer — les défauts suffisent.
+
+  Variable                     Défaut                             Rôle
+  ---------------------------  ---------------------------------  ---------------------------
+  ALGUESS_WEBAPP_WORKSPACE     ./workspace                        racine de travail : registre
+                                                                sources.json, runs/, cache.sqlite,
+                                                                uploads/, converted/, server.log
+  ALGUESS_WEBAPP_ROOTS         ~/Downloads:./workspace/uploads    racines autorisées pour
+                                                                POST /api/sources/scan ;
+                                                                séparateur = os.pathsep (":")
+                                                                (settings.py:40)
+  ALGUESS_WEBAPP_HOST          127.0.0.1                         hôte d'écoute
+  ALGUESS_WEBAPP_PORT          8765                              port d'écoute
+  ALGUESS_WEBAPP_MAX_UPLOAD_MB 50                                 plafond par fichier uploadé
+                                                                (sinon HTTP 413)
+
+  Constantes non paramétrables : allowed_suffixes = (".txt", ".epub", ".pdf")
+  (settings.py:17) ; un fichier d'un autre type en upload renvoie 415.
+
+  Piège majeur à connaître avant tout débogage : SETTINGS = WebSettings.from_env()
+  est figé AU MOMENT DE L'IMPORT (settings.py:46). Toute variable doit donc être
+  définie AVANT de lancer le serveur ou pytest. Modifier une variable dans un
+  terminal déjà ouvert ne change rien. C'est exactement ce que les tests
+  exploitent (tests/conftest.py:13-16 fixe workspace/roots/port AVANT tout import
+  de webapp) et c'est la cause classique du 403 « Chemin hors des racines
+  autorisées ».
+
+  Autres variables lues ailleurs dans le code :
+  MONGODB_URI ................. provider=mongodb (retrieval/mongo_store.py:43 ;
+                                absent -> erreur explicite demandant de définir la variable)
+  NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_EXTRACTION_MODEL,
+  NVIDIA_EMBEDDING_MODEL, NVIDIA_RELATION_MODEL, NVIDIA_SUMMARY_MODEL
+  NVIDIA_SUMMARY_MODEL ....... provider=nvidia uniquement (§4.1)
+
+--------------------------------------------------------------------------------
+6. LANCEMENT (commandes exécutées et vérifiées le 2026-09-30)
+--------------------------------------------------------------------------------
+Toujours depuis /home/karim/alguesss454557575.
+
+6.1 Avec le virtualenv du projet (chemin vérifié, recommandé)
+
+    cd /home/karim/alguesss454557575
+    .venv/bin/python -m uvicorn webapp.server:app --host 127.0.0.1 --port 8765
+    # ou : .venv/bin/uvicorn webapp.server:app --host 127.0.0.1 --port 8765
+    # interface : http://127.0.0.1:8765
+
+6.2 Sans virtualenv (fonctionne pour le serveur, PAS pour les tests)
+
+    cd /home/karim/alguesss454557575
+    python3 -m uvicorn webapp.server:app --host 127.0.0.1 --port 8765
+    Le python3 système a fastapi/uvicorn/python-multipart/pytest/httpx, le
+    serveur démarre bien. En revanche pymongo et mongomock y sont ABSENTS :
+    les runs provider=mongodb échoueront et la suite de tests ne sera même pas
+    collectable (§8). Le README présente cette voie comme équivalente : elle ne
+    l'est pas.
+
+6.3 Variante uv (non exécutée ici, pour ne pas resynchroniser le virtualenv du
+    projet) — le README propose :
+        uv venv && uv pip install -r requirements.txt
+        uv run uvicorn webapp.server:app --host 127.0.0.1 --port 8765
+    `uv run` resynchronise l'environnement et peut réécrire .venv ; sur un
+    dépôt à protéger, préférer la variante non mutante vérifiée ci-dessus, ou
+    `uv run --no-sync uvicorn ...` (option --no-sync confirmée présente dans
+    `uv run --help`).
+
+6.4 Vérification de santé (réponse réelle capturée le 2026-09-30)
+
+    curl -fsS http://127.0.0.1:8765/api/health
+
+    {"ok":true,"phases":["ingestion","segmentation","extraction","embeddings",
+    "candidats","relations","clustering","scoring","synthese","audit","manifest"],
+    "allowed_roots":[...],"allowed_suffixes":[".txt",".epub",".pdf"],
+    "upload_multipart":true}
+
+    -> Les 11 phases (webapp/jobs.py:14-16) doivent apparaître dans l'ordre, et
+       upload_multipart:true indique que python-multipart est bien installé.
+       La même commande a répondu 200 sur le python3 système (workspace
+       redirigé).
+
+    GET / renvoie webapp/static/index.html ; si le fichier est absent, la route
+    répond 503 « index.html absent : livrable front-end non déposé ».
+
+--------------------------------------------------------------------------------
+7. WORKSPACE (arborescence réelle observée)
+--------------------------------------------------------------------------------
+Racine : $ALGUESS_WEBAPP_WORKSPACE (défaut ./workspace, soit
+/home/karim/alguesss454557575/workspace). Créé automatiquement au démarrage du
+serveur (server.py:27-28 crée le répertoire et ouvre workspace/server.log).
+
+  workspace/
+    sources.json .... registre des sources : book_id, author, titre, path,
+                      sha256_bytes, n_bytes, n_chars, size_bytes. Relu à CHAQUE
+                      appel (webapp/sources.py:14-16 : le spec le figeait à
+                      l'import, l'implémentation le relit) ; réécrit à chaque
+                      ajout/patch/suppression.
+    uploads/ ........ fichiers déposés par POST /api/sources/upload
+                      (contenu actuel : 13 fichiers, .epub, .pdf, .txt)
+    converted/ ...... texte de référence extrait des .epub et .pdf, nommé
+                      <book_id>.txt (sources.py:58-62). 10 fichiers observés.
+    runs/ ........... un dossier par run : run_<10 hex>
+                        ├── state.json ....... état sérialisé (statut, phase,
+                        │                     compteurs, config, dates) ; relu au
+                        │                     démarrage pour l'historique
+                        │                     (jobs.py:86-105) ; un run
+                        │                     laissé en running/pending est
+                        │                     marqué "cancelled" au redémarrage
+                        ├── manifest.json ... manifeste du run
+                        ├── cards_index.json  index des fiches publiées
+                        └── cards/......... fiches Markdown + *.evidence.json
+    cache.sqlite .... cache partagé entre runs (adapter.py:15)
+    server.log ...... journal applicatif (logging INFO, une ligne par
+                      /api/health et par erreur non gérée)
+
+  Exemple d'état réel (workspace/runs/run_edf46c1e7b/state.json) :
+      status "done", phase "manifest", config {provider local, concurrency 8},
+      compteurs : sources_chargées 3, chapitres 2, propositions 16, ...
+  13 runs présents au 2026-09-30. Ce workspace est gitignoré (.gitignore) :
+  il est un état de travail, pas un livrable versionné.
+
+--------------------------------------------------------------------------------
+8. TESTS
+--------------------------------------------------------------------------------
+8.1 Suite Python (seule porte de qualité du projet)
+
+    cd /home/karim/alguesss454557575
+    .venv/bin/python -m pytest
+
+  Sortie réelle du 2026-09-30 : 71 passed, 1 warning in 7.91s (exit 0).
+  Répartition (pytest --collect-only -q) :
+      tests/test_api.py       16
+      tests/test_jobs.py      12
+      tests/test_mongo.py      9
+      tests/test_pipeline.py   8
+      tests/test_providers.py 12
+      tests/test_settings.py   5
+      tests/test_sources.py    9
+      -------------------------- ---
+      TOTAL                    71
+
+  Avertissement unique, sans effet :
+  StarletteDeprecationWarning — « Using httpx with starlette.testclient is
+  deprecated » (fastapi/testclient.py). Non bloquant.
+
+  Le PYTHONPATH=. du README est superflu avec l'installation en mode
+  éditable (§2.1) ; sans installation en mode éditable, il reste nécessaire quand on
+  utilise le python3 système.
+
+  Piège : avec le python3 SYSTÈME, la simple collecte échoue —
+      python3 -m pytest --collect-only -q   ->   exit 2
+      ERROR tests/test_mongo.py : ModuleNotFoundError: No module named 'mongomock'
+      (collecte interrompue, aucun test exécuté)
+  Il faut donc le virtualenv, ou installer au moins pymongo + mongomock.
+
+  Note de comptage : le README annonce « 61 tests » (deux fois). Le nombre réel
+  est 71 (§10, item 1).
+
+8.2 Dégradation sans python-multipart (comportement vérifié)
+
+  Vérifié en forçant find_spec('multipart') -> None (même condition que
+  webapp/server.py:24) :
+      - tests/test_api.py : 14 passed, 2 skipped (exit 0)
+        SKIPPED tests/test_api.py:192 : python-multipart absent
+        SKIPPED tests/test_api.py:204 : python-multipart absent
+      - MULTIPART_DISPONIBLE = False
+      - POST /api/sources/upload -> 503
+        {"detail":"python-multipart absent : /api/sources/upload indisponible
+                   (dépendance déclarée dans requirements.txt)"}
+      - GET /api/health -> "upload_multipart": false
+  Donc : 2 tests ignorés, jamais de faux 200. C'est le comportement annoncé et
+  il est réel.
+
+8.3 Tests d'interface Node — voir §3 et §10 item 5
+
+      npm test            -> exit 1 (échec par construction : inutile)
+      node tests/puppeteer-ui.mjs -> exit 1 : le script clique un onglet
+          `review` qui n'existe plus (Error: No element found for selector:
+          #nav button[data-tab="review"]).
+  Les deux scripts sont donc À NE PAS UTILISER en l'état. Recette vérifiée de
+  mon côté (script corrigé hors projet, 5 onglets, serveur borné au port 8765) :
+      {"status":"PASS","tabs":5,"consoleErrors":0}
+  autrement dit l'interface est saine ; ce sont les scripts de test qui sont
+  datés. Les navigateurs sont déjà disponibles (§3) : la correction se limite
+  à remplacer la liste d'onglets ['run','monitor','review','cards','manifest',
+  'sources'] par ['run','monitor','cards','manifest','sources'] dans
+  tests/puppeteer-ui.mjs et tests/browser-ui.spec.js (ligne 13-14).
+
+--------------------------------------------------------------------------------
+9. DÉPANNAGE CONNU (symptôme -> cause -> action)
+--------------------------------------------------------------------------------
+  403 « Chemin hors des racines autorisées » au POST /api/sources/scan
+      -> le dossier scanné n'est pas sous ~/Downloads ni sous
+         ./workspace/uploads (ou ALGUESS_WEBAPP_ROOTS a été défini après le
+         démarrage). Action : corriger ALGUESS_WEBAPP_ROOTS et RELANCER le
+         serveur (variables figées à l'import, §5).
+  404 sur /api/runs/<id>, /api/runs/<id>/cards, ...manifest, ...events
+      -> identifiant de run inconnu, ou historique non restauré. Les runs sont
+         rechargés depuis workspace/runs/*/state.json au démarrage ; un run
+         interrompu devient "cancelled".
+  409 « SHA256 divergent pour <book_id> »
+      -> le fichier source a été modifié après son enregistrement ; les preuves
+         ne sont plus vérifiables. Action : supprimer et ré-enregistrer la source.
+  422 sur POST /api/runs (liste vide) ou GET /api/evidence (positions hors
+  texte) : comportement attendu, pas une panne.
+  415 à l'upload : suffixe hors de (.txt, .epub, .pdf). 413 : fichier >
+  ALGUESS_WEBAPP_MAX_UPLOAD_MB.
+  503 sur /api/sources/upload : python-multipart absent (§8.2).
+  503 sur GET / : webapp/static/index.html absent.
+  400 « Sources inconnues » : book_id non présent dans sources.json.
+  Run terminé en failed : lire state.json -> champ "error" (trace tronquée à
+  1500 caractères, jobs.py:128) et workspace/server.log.
+  ImportError mongomock / pymongo : §2, §4.1 — utiliser le virtualenv.
+  provider=nvidia qui échoue : NVIDIA_API_KEY absente (providers_impl.py:86).
+  SyntaxError d'attribut "slots=True" (settings.py:9) : Python < 3.10 —
+  hors du contrat (>=3.11), sans objet ici.
+
+--------------------------------------------------------------------------------
+10. ÉCARTS CONSTATÉS ENTRE LE README ET L'ÉTAT RÉEL DU DÉPÔT (à corriger)
+--------------------------------------------------------------------------------
+  1. « 61 tests » (README lignes 36 et 51) -> 71 tests, 71 passed.
+  2. « artifacts/backend-contract.md détaille les routes... » (README ligne 54)
+     -> le dossier artifacts/ N'EXIST PAS dans le dépôt. Renvoi mort.
+  3. « Ou sans venv, depuis la racine de app/ » (README ligne 15)
+     -> il n'y a pas de dossier app/ ; la racine du dépôt EST la racine de
+        l'application. Et cette variante ne permet ni provider=mongodb ni la
+        suite de tests (§6.2, §8).
+  4. Les 11 phases ne sont pas documentées dans le README alors que
+     /api/health les expose ; elles servent de repère de progression (SSE).
+  5. Les deux scripts d'interface (tests/puppeteer-ui.mjs,
+     tests/browser-ui.spec.js) visent un onglet `review` et un parcours
+     d'arbitrage humain supprimés (le front-end n'a plus que 5 onglets :
+     sources, run, monitor, cards, manifest ; webapp/static/index.html ne
+     contient plus la chaîne « review »). tests/test_api.py:68 verrouille au
+     contraire la suppression des routes d'arbitrage. Ces scripts échouent
+     aujourd'hui.
+  6. Le README ne mentionne ni l'installation éditable du projet dans .venv,
+     ni le fait que SETTINGS est figé à l'import — les deux causes principales
+     de dépannage.
+
+--------------------------------------------------------------------------------
+11. PREUVES (dossier de mission, logs/)
+--------------------------------------------------------------------------------
+  logs/01_env.txt .................. toolchain + présence des 13 paquets
+                                     (système vs .venv)
+  logs/02_collect_system.txt ....... collecte avec python3 système (exit 2,
+                                     mongomock manquant)
+  logs/03_collect_venv.txt ......... décompte réel par fichier de test
+  logs/04_run_venv.txt ............. première exécution complète (71 tests)
+  logs/13_run_summary.txt .......... « 71 passed, 1 warning in 7.91s »
+  logs/05_smoke_venv.log + logs/06_health_venv.json ... serveur .venv + /api/health
+  logs/07_smoke_system.log + logs/08_health_system.json  ... serveur python3 système
+  logs/09_tree.txt ................. arborescence réelle, runs, uploads, converted
+  logs/10_details.txt .............. variables d'environnement lues, marqueurs
+                                     skipif, npm test, loader/providers
+  logs/11_nomultipart.txt .......... 2 skips + 503 + upload_multipart:false
+  logs/12_js.txt ................... --no-sync (uv), cache navigateurs, versions npm
+  logs/15_puppeteer.txt ............ échec du script d'interface obsolète
+  logs/20_puppeteer5.txt ........... « PASS », 5 onglets, 0 erreur console
+  logs/verify_no_multipart.py ...... harnais de vérification (8.2)
+  logs/puppeteer-ui-5tabs.mjs ..... variante corrigée du script d'interface
+================================================================================

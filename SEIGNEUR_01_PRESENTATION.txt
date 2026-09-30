@@ -1,0 +1,490 @@
+================================================================================
+PRÉSENTATION DU PROJET — « matrice algorithmique v2 — console web » (annexe W)
+Destinataire : Seigneur, développeur qui reprend le projet
+Source d'analyse : lecture seule de /home/karim/alguesss454557575/
+Date de l'inspection : 2026-09-30
+================================================================================
+
+NOTE DE LECTURE
+Ce document décrit le SYSTÈME RÉELLEMENT CONSTRUIT, pas la spécification.
+Quand les deux divergent, l'écart est signalé explicitement (section 7).
+Sources de vérité croisées : le code (webapp/, orchestration/, domain/,
+ingestion/, extraction/, retrieval/, taxonomy/, providers_impl.py), le README.md,
+et les deux specs en lecture seule « back end final.txt » / « front end final.txt ».
+Aucune modification n'a été apportée au projet pendant cette inspection.
+
+
+================================================================================
+1. IDENTITÉ
+================================================================================
+Nom interne : matrice algorithmique v2 — console web (annexe W).
+  - pyproject.toml:6-9  → name = "matrice-v2-console", version 0.2.0,
+    description « Console web locale (FastAPI) de la matrice algorithmique v2 ».
+  - README.md:1         → titre « Console — matrice algorithmique v2 (annexe W) ».
+  - webapp/server.py:22  → FastAPI(title="Matrice Algorithmique v2 — Console").
+  - webapp/static/index.html:5 → <title>Matrice Algorithmique v2 — Console</title>.
+
+Nature : un backend FastAPI + un front-end mono-fichier (HTML/CSS/JS natif),
+reconstruit À PARTIR des specs. Le code n'est pas le code des specs : c'est une
+réécriture. Les specs restent dans le dépôt comme documents de référence en
+lecture seule (« back end final.txt », « front end final.txt », ~47 Ko et ~60 Ko).
+
+Parent documentaire : « front end final.txt » décrit l'ensemble du pipeline de
+synthèse documentaire (PARTIE 0 à PARTIE 19, en-têtes relevés lignes 10-1844) ;
+« back end final.txt » décrit l'annexe W (W.1 à W.10, lignes 14-890), c'est-à-dire
+la couche web. Le projet construit ne couvre QUE l'annexe W, pas les PARTIE 1-19.
+
+
+================================================================================
+2. BUT MÉTIER
+================================================================================
+Traiter un corpus de livres (.txt / .epub / .pdf) pour en extraire des
+propositions (« claims »), établir des relations entre propositions de livres
+différents, regrouper les propositions qui se répondent, produire des fiches
+documentées, puis exporter le résultat de manière auditable.
+
+Chaîne implémentée, dans l'ordre, telle que déclarée :
+  - 11 phases : ingestion → segmentation → extraction → embeddings → candidats →
+    relations → clustering → scoring → synthese → audit → manifest.
+    Source : orchestration/pipeline.py:28-30, dupliqué à l'identique dans
+    webapp/jobs.py:14-16 et côté front dans webapp/static/index.html:134.
+  - Détaillées :
+    * ingestion   : chargement du texte, SHA256 figé et re-vérifié
+                     (ingestion/loader.py:68-79), métadonnées de source.
+    * segmentation: repérage des en-têtes de chapitre par expression régulière,
+                     offsets absolus (ingestion/segmenter.py:14-49).
+    * extraction  : sélection de phrases-significatives par règles lexicales
+                     (extraction/claim_extractor.py:29-52).
+    * embeddings  : sac de mots haché, déterministe, L2-normalisé, dim 256
+                     (retrieval/vector_index.py:22-53).
+    * candidats   : toutes les paires cross-livre dont le cosinus ≥ 0.25
+                     (orchestration/pipeline.py:171-183).
+    * relations   : recouvrement lexical, bande grise [0.35 ; 0.65[
+                     (providers_impl.py:26-57, orchestration/pipeline.py:185-211).
+    * clustering  : union-find sur les liens SOUTIENT/CONTREDIT de confiance ≥ 0.5,
+                     groupe conservé seulement s'il couvre ≥ 2 livres distincts
+                     (orchestration/pipeline.py:250-282).
+    * scoring     : n_sources exact, confiance moyenne, palier P1/P3/P4/P5+
+                     selon configs/pipeline.yaml (orchestration/pipeline.py:284-315).
+    * synthese    : rédaction du Markdown + JSON de preuves (pipeline.py:341-364).
+    * audit       : portes de qualité — n_sources ≥ 2, confiance ≥ 0.60, et
+                     validité des positions dans le texte de référence
+                     (orchestration/pipeline.py:328-339).
+    * manifest    : JSON de reproductibilité (pipeline.py:366-402).
+
+Principe directeur repris des specs (« front end final.txt »:6) :
+« similarité ≠ attribution ≠ soutien documentaire ≠ validité scientifique ».
+
+
+================================================================================
+3. PARCOURS UTILATEUR (état réel de l'interface)
+================================================================================
+Cinq onglets, pas six (webapp/static/index.html:48-50 ; les onglets déclarés
+sont : sources, run, monitor, cards, manifest — vérifié par grep des data-tab).
+
+  Étape 1 — Sources (onglet « Sources »)
+    a) Scanner un dossier : champ texte + bouton « Scanner le dossier »
+       (index.html:62-63) → POST /api/sources/scan (server.py:67-74).
+       Le dossier doit être sous une racine autorisée, sinon 403.
+    b) Ou déposer des fichiers par glisser-déposer / sélecteur multiple
+       (index.html:69) → POST /api/sources/upload (server.py:77-98).
+    c) Tableau des sources enregistrées : book_id, auteur, titre, taille,
+       aperçu du SHA256 ; auteur et titre sont modifiables en ligne
+       (PATCH, server.py:111-116) ; suppression possible (DELETE, server.py:119-121).
+    d) Cases à cocher pour choisir les sources du prochain run (index.html:283).
+
+  Étape 2 — Lancer (onglet « Lancer »)
+    Choix du fournisseur (local / mongodb / nvidia / openai / anthropic / vllm),
+    des quatre modèles, de la concurrence (1-64), d'une cible éditoriale
+    indicative (index.html:82-88). Les seuils ne sont PAS réglables depuis l'UI :
+    ils viennent de configs/pipeline.yaml (index.html:90).
+    Bouton « Lancer sur les sources cochées » → POST /api/runs → 202 + run_id
+    (server.py:130-137). L'onglet bascule automatiquement sur « Suivi ».
+
+  Étape 3 — Suivi en direct (onglet « Suivi »)
+    Flux SSE : GET /api/runs/{run_id}/events (server.py:156-180).
+    Le serveur envoie un événement « hello », puis des « progress » et « log »,
+    puis « final ». Keep-alive toutes les 15 s. Si le run est déjà terminé, le
+    flux rend la main immédiatement au lieu de boucler (server.py:164-166).
+    Affichage : les 11 phases colorées, une barre de progression, les compteurs,
+    le journal (index.html:469-537).
+    Repli automatique : si EventSource est indisponible ou si le flux se coupe,
+    l'interface passe en sondage GET toutes les 3 s, et surveille le silence du
+    flux au-delà de 45 s (index.html:538-586).
+    Bouton « Annuler » → POST /api/runs/{run_id}/cancel → 202, annulation
+    coopérative (server.py:150-153 ; jobs.py:134-138).
+
+  Étape 4 — Fiches (onglet « Fiches »)
+    Liste filtrable par palier, par famille et par titre (index.html:109-113,
+    638-670). Chaque ligne affiche palier, famille (+ mention « incertaine » si
+    confiance < 0.6), nombre de sources et titre.
+    Une fiche = Markdown rendu + preuves structurées
+    (GET /api/runs/{id}/cards, GET /api/runs/{id}/cards/{slug} ; server.py:184-198).
+    Preuve re-vérifiée au clic : le bouton « ↗ re-vérifier » appelle
+    GET /api/evidence/{book_id}?start=&end= (server.py:201-221). Le serveur
+    recharge le fichier, recontrôle le SHA256, rejoue prepare_book et renvoie le
+    contexte encadré avec le span surligné. Positions hors texte → 422 ;
+    fichier modifié → 409 ; SHA256 réellement re-vérifié → sha256_verified: true.
+    Message d'état honnête si aucune fiche n'est publiée : « les portes de qualité
+    ont éliminé toutes les candidates » (index.html:647).
+
+  Étape 5 — Manifest & export (onglet « Manifest »)
+    GET /api/runs/{id}/manifest (server.py:225-230). L'interface n'affiche le
+    manifest qu'à l'état « done » et explique le cas contraire (index.html:762-775).
+    Export : GET /api/runs/{id}/export.zip (server.py:233-243) — archive de tout
+    le dossier du run (fiches Markdown, JSON de preuves, cards_index.json,
+    manifest.json, state.json), en mémoire, sans fichier temporaire.
+
+  ABSENT DU PARCOURS : la file d'arbitrage et la reprise. Les specs les décrivent
+  (routes /review, /review/{item_id}, /resume dans « back end final.txt »:14-39 et
+  504-542), mais le code les a supprimées — voir section 7, écart n°1.
+  L'interface n'a donc ni onglet ni bouton d'arbitrage : c'est intentionnel.
+
+
+================================================================================
+4. FONCTIONNALITÉS PRINCIPALES (sourcées)
+================================================================================
+F1. Registre de sources persistant en JSON.
+    webapp/sources.py:14-40 ; stockage workspace/sources.json ; relu à chaque
+    appel, pas figé à l'import (commentaire explicite ligne 15).
+
+F2. Détection automatique auteur/titre par heuristique.
+    webapp/sources.py:11, 19-27 : motif « Titre (Auteur) … » → book_id normalisé,
+    auteur par défaut « Inconnu », suffixe _2/_3… en cas de collision.
+
+F3. Conversion .epub et .pdf en texte de référence.
+    ingestion/loader.py:18-43 : ebooklib + BeautifulSoup pour l'epub,
+    pymupdf pour le pdf, le tout normalisé (NFC, fins de ligne unifiées).
+    Le texte de référence est écrit dans workspace/converted/<book_id>.txt
+    (webapp/sources.py:57-62) ; c'est ce fichier qui est ensuite hashé.
+
+F4. Intégrité cryptographique des sources.
+    ingestion/loader.py:10-15, 68-79 : SHA256 calculé à l'enregistrement
+    (Source figée), puis re-vérifié à chaque chargement ET à chaque clic sur une
+    preuve. Toute divergence lève une erreur explicite.
+
+F5. Extraction lexicale déterministe.
+    extraction/claim_extractor.py:29-52 : phrases de 40 à 400 caractères,
+    ≥ 8 mots, 4 par chapitre maximum, identifiant prop_id = book_id + blake2b
+    des positions. Plafond global 40 propositions/livre
+    (configs/pipeline.yaml:15, appliqué pipeline.py:149).
+
+F6. Mémo d'extraction partagé entre runs.
+    orchestration/pipeline.py:405-442 : cache SQLite (workspace/cache.sqlite,
+    chemin partagé, adapter.py:15), tolérant aux erreurs (best-effort), indexé
+    par « claims:<book_id>:<sha256> » donc invalidé automatiquement dès que le
+    fichier change.
+
+F7. Fournisseurs de modèles interchangeables.
+    webapp/providers.py:10-59, Providers implémentés :
+      - local    : NullExtractionModel + DeterministicHashEmbedding +
+                   LexicalOverlapRelation + FamilyClassifier.
+      - mongodb  : embeddings persistés dans MongoDB (retrieval/mongo_store.py),
+                   le reste identique à local.
+      - nvidia   : vrais clients HTTP (extraction, embeddings, NLI, synthèse)
+                   via providers_impl.py:71-196 ; exige NVIDIA_API_KEY, sinon
+                   échec explicite (providers_impl.py:85-86).
+      - openai / anthropic / vllm : symboles déclarés MAIS qui lèvent
+                   ProviderIndisponible (providers_impl.py:60-68). Ce n'est pas
+                   une simulation : aucun appel réseau n'est inventé.
+
+F8. Persistance MongoDB des embeddings.
+    retrieval/mongo_store.py : base « matrice_v2 », collection « embeddings »,
+    documents indexés par prop_id, recherche par cosinus. Le vecteur reste
+    localement calculé (ligne 102) ; MongoDB sert de cache de persistance,
+    pas de moteur vectoriel.
+
+F9. Taxonomie à 6 familles avec incertitude explicite.
+    taxonomy/family_classifier.py:6-37 : FAM1..FAM6 (foi/preuve, chronologie,
+    méthode, critique, dictionnaire, contexte politique), prototypes écrits à la
+    main, cosinus sur le centroïde ; sous 0.60 de confiance la famille rendue
+    est « FAM? » et l'UI ajoute « (incertaine) ».
+
+F10. Grilles de qualité et publication conditionnelle.
+    orchestration/pipeline.py:328-339 : une fiche est éliminée si n_sources < 2,
+    si confiance moyenne < 0.60, ou si une position de preuve sort du texte de
+    référence. Les fiches éliminées ne sont pas listées (adapter.py:37-42).
+
+F11. Persistance et restauration de l'historique des runs.
+    webapp/jobs.py:86-105 : au démarrage, JOBS.runs est reconstruit depuis
+    workspace/runs/*/state.json ; un run qui était running/pending/waiting_review
+    est marqué « cancelled » avec le motif « Run interrompu par un redémarrage ».
+
+F12. Manifest de reproductibilité.
+    orchestration/pipeline.py:366-402 : run_id, horodatage UTC, fournisseur,
+    seuils utilisés, configuration d'extraction et d'embeddings, chemin de cache,
+    distributions des paliers et des familles, compteurs (candidats, relations,
+    zone grise), et un avertissement explicite en mode local.
+
+F13. Traçabilité de l'erreur.
+    server.py:56-59 : toute exception non gérée est journalisée avec traceback
+    puis relancée ; l'état d'échec du run est persisté avec la trace
+    (jobs.py:127-128) et remonté dans l'interface.
+
+F14. Journalisation applicative.
+    server.py:26-37 : logs console + fichier workspace/server.log.
+
+F15. Accessibilité et robustesse du front.
+    index.html : navigation par onglets ARIA (tablist/tab/tabpanel), focus visible,
+    aria-live sur le journal et les bandeaux, raccourci clavier Entrée/Espace sur
+    les fiches, détection des erreurs JavaScript non gérées (index.html:799-806),
+    messages d'erreur contextualisés selon le code HTTP (index.html:747-749).
+
+
+================================================================================
+5. PRINCIPES DE CONCEPTION (tous vérifiés dans le code)
+================================================================================
+P1. Local-only par défaut.
+    webapp/settings.py:10 → host 127.0.0.1 ; README.md:27 ; surcharge possible
+    par ALGUESS_WEBAPP_HOST. Aucune authentification n'est implémentée : c'est
+    un choix assumé, signalé par la spec elle-même (« back end final.txt »:891-892).
+
+P2. Racines autorisées et confinement des chemins.
+    webapp/settings.py:19-26 : tout chemin est expanduser + resolve, puis testé
+    contre la liste des racines ; sinon PermissionError → HTTP 403.
+    Racines par défaut : ~/Downloads et ./workspace/uploads (settings.py:13-15).
+
+P3. Zéro étape de build.
+    Un seul fichier webapp/static/index.html servi tel quel par la route « / »
+    (server.py:41-45), CSS et JS natifs embarqués. Aucune chaîne de compilation
+    front. Node/Playwright ne servent qu'aux tests navigateur optionnels.
+
+P4. Dégradation honnête, jamais de faux succès.
+    - python-multipart absent → POST /api/sources/upload répond 503 avec le nom
+      de la dépendance manquante (server.py:94-98) ; jamais de faux 200.
+    - index.html absent → HTTP 503 « livrable front-end non déposé » (server.py:44).
+    - fournisseur distant non implémenté → ProviderIndisponible (providers_impl.py:60-68).
+    - NVIDIA_API_KEY absente → ProviderIndisponible explicite (providers_impl.py:85-86).
+    - pymongo absent → ImportError explicite (mongo_store.py:39-40).
+    - fichier source modifié après enregistrement → 409 avec les deux empreintes
+      (server.py:211-213 via loader.py:76-78).
+    Cette exigence est explicitement formulée dans les specs
+    (« back end final.txt »:890-895, et README.md:4-5).
+
+P5. Déterminisme.
+    Aucun appel réseau en mode local ; embeddings par hachage, relations par
+    recouvrement lexical, extractions par règles. Deux runs sur les mêmes
+    fichiers donnent les mêmes résultats (à concurrence près).
+
+P6. Zéro dépendance ML distante simulée.
+    providers_impl.py:15-19 déclare en clair que le client réel « n'est pas fourni
+    par la spécification » et qu'aucun résultat fictif n'est produit.
+
+P7. Localisation de surface.
+    Interface, messages d'erreur et documentation en français ; le mot anglais
+    « console » n'apparaît que comme propriété window.console du navigateur
+    (webapp/static/index.html:202), jamais comme libellé d'interface. La suite de
+    tests ne vérifie PAS cette propriété : tests/test_api.py:49 se contente de
+    vérifier que la chaîne « Matrice » figure dans le HTML servi.
+
+
+================================================================================
+6. FAÇADE HTTP COMPLÈTE (routes réellement déclarées)
+================================================================================
+  GET    /                                          server.py:41
+  GET    /api/health                                 server.py:48
+  POST   /api/sources/scan                          server.py:67
+  POST   /api/sources/upload                        server.py:77 ou 95
+  GET    /api/sources                               server.py:101
+  PATCH  /api/sources/{book_id}                     server.py:111
+  DELETE /api/sources/{book_id}          (204)       server.py:119
+  POST   /api/runs                      (202)       server.py:130
+  GET    /api/runs                                   server.py:140
+  GET    /api/runs/{run_id}                         server.py:145
+  POST   /api/runs/{run_id}/cancel      (202)       server.py:150
+  GET    /api/runs/{run_id}/events      (SSE)       server.py:156
+  GET    /api/runs/{run_id}/cards                   server.py:184
+  GET    /api/runs/{run_id}/cards/{slug}            server.py:190
+  GET    /api/evidence/{book_id}                    server.py:201
+  GET    /api/runs/{run_id}/manifest                server.py:225
+  GET    /api/runs/{run_id}/export.zip              server.py:233
+Total : 16 routes. La spec en prévoit 19 (les 3 manquantes sont celles
+d'arbitrage, voir section 7).
+
+Variables d'environnement (webapp/settings.py:28-43, README.md:23-28) :
+  ALGUESS_WEBAPP_WORKSPACE     défaut ./workspace
+  ALGUESS_WEBAPP_ROOTS        défaut ~/Downloads:./workspace/uploads (séparateur :)
+  ALGUESS_WEBAPP_HOST/_PORT   défaut 127.0.0.1 / 8765
+  ALGUESS_WEBAPP_MAX_UPLOAD_MB défaut 50
+  MONGODB_URI                  requise uniquement pour provider=mongodb
+  NVIDIA_API_KEY / NVIDIA_BASE_URL  requises uniquement pour provider=nvidia
+Attention : ces variables ne sont lues qu'À L'IMPORT (SETTINGS figé,
+webapp/settings.py:46). Les tests exploitent ce détail en les positionnant avant
+import (tests/conftest.py:13-16).
+
+
+================================================================================
+7. ÉCARTS ENTRE LES SPECS ET LE CODE CONSTRUIT (à lire impérativement)
+================================================================================
+ÉCART n°1 — L'ARBITRAGE HUMAIN ET LA REPRISE ONT ÉTÉ SUPPRIMÉS.
+  C'est l'écart le plus important. Les specs font de l'arbitrage une
+  « fonctionnalité de premier rang » (« back end final.txt »:8) et prévoient :
+    - GET  /api/runs/{id}/review            (back end final.txt :505-513)
+    - POST /api/runs/{id}/review/{item_id}  (back end final.txt :518-531)
+    - POST /api/runs/{id}/resume            (back end final.txt :533-541)
+    - les fichiers review_queue.jsonl et decisions.jsonl
+    - ValidationState.A_ARBITRER et la porte quality_gates
+      correspondante (« front end final.txt »:1132-1136)
+    - run_until_review / run_after_review / load_human_decisions
+      (« back end final.txt »:334-344)
+  Or le code livré :
+    - ne définit que deux états de validation : PUBLIE et ELIMINE
+      (domain/models.py:15-17) ; A_ARBITRER n'existe nulle part ;
+    - n'expose aucune route d'arbitrage ni de reprise ;
+    - exécute le pipeline en UNE passe, sans pause (pipeline.py:100-105,
+      docstring « Entonnoir ingestion -> manifest en une passe, sans arbitrage
+      humain ») ;
+    - résout automatiquement les paires en zone grise en « contexte », qui ne
+      peuvent donc former aucun cluster (pipeline.py:198-214).
+  Ce n'est pas un oubli mais une décision, verrouillée par les tests :
+  tests/test_api.py:68-74 exige que les routes d'arbitrage répondent 404/405 ;
+  tests/test_api.py:94-95 et 117 vérifient l'absence de review_queue.jsonl et
+  de decisions.jsonl, y compris dans l'export ; tests/test_pipeline.py:66 et 99
+  font de même. Conséquence produit : une affirmation ambiguë est écartée
+  silencieusement, l'utilisateur n'a aucun moyen de la trancher.
+
+ÉCART n°2 — DES MODULES ENTIÈREMENT DÉCRITS DANS LA SPEC N'EXISTENT PAS.
+  « front end final.txt » (PARTIE 14, ligne 1330-1341 ; arborescence ligne 1819)
+  décrit un projet plus large. Absents du dépôt :
+    persistence/  (cache_db.py, atomic_write.py — PARTIE 13)
+    scoring/      (evidence_validation.py — PARTIE 9)
+    synthesis/    (card_builder.py — PARTIE 11)
+    verification/ (quality_gates.py, relation_classifier.py — PARTIE 8/12)
+    retrieval/hybrid_search.py, retrieval/lexical_index.py (PARTIE 6 : BM25 + RRF)
+  Le clustering est un union-find maison (pipeline.py:250-282), pas le reranker
+  décrit. Le titre d'une fiche est bâti par comptage de mots fréquents
+  (pipeline.py:317-326), pas par un LLM.
+
+ÉCART n°3 — LE README EST EN RETRAIT SUR TROIS POINTS.
+  - « 61 tests » (README.md:36 et 51) : la suite en compte réellement 71
+    (16 api + 12 jobs + 9 mongo + 8 pipeline + 12 providers + 5 settings +
+    9 sources). Vérifié par pytest --collect-only le 2026-09-30.
+  - README.md:54 annonce « artifacts/backend-contract.md ». Ce répertoire et ce
+    fichier N'EXISTENT PAS dans le dépôt.
+  - README.md:36-37 décrit le cas « python-multipart absent ». En l'état, la
+    dépendance EST installée et les 2 tests d'upload s'exécutent.
+
+ÉCART n°4 — LES TESTS NAVIGATEUR RÉFÈRENTENT À UN ONGLET INEXISTANT.
+  tests/browser-ui.spec.js:14 et tests/puppeteer-ui.mjs:8 parcourent six onglets
+  dont « review ». L'interface n'en expose que cinq ; le `#nav button[data-tab=
+  "review"]` n'existe pas → ces deux tests échoueront à l'exécution.
+  Par ailleurs test-results/.last-run.json annonce « passed », mais il date du
+  2026-09-29 18:15 alors que webapp/static/index.html a été modifié le
+  2026-09-30 03:22 : ce résultat est antérieur à la version actuelle du front.
+  Enfin package.json:13 déclare « npm test » comme scripts de test alors que la
+  commande echo une erreur — les tests navigateur n'ont pas de point d'entrée
+  npm fonctionnel.
+
+ÉCART n°5 — LE MODE LOCAL NE PRODUIT AUCUNE FICHE SUR LE CORPUS RÉEL.
+  Les 13 runs conservés dans workspace/runs/ ont tous produit 0 fiche publiée
+  (0 candidat ou 0 cluster). Mesure directe sur 5 livres du corpus : 64
+  propositions, 1152 paires cross-livre, cosinus maximum 0.2928, seulement
+  6 paires au-dessus du seuil de 0.25. Sur un run à 12 livres (run_024065ec75,
+  ancienne implémentation) on lisait 301 propositions et 87 candidats.
+  Conclusion : le seuil candidat_cos_min=0.25 est calibré pour de vrais
+  embeddings, pas pour un sac de mots haché. En mode local, la console sert à
+  exercer l'interface, pas à produire des fiches — ce que dit explicitement
+  l'avertissement du manifest (pipeline.py:377-380).
+
+ÉCART n°6 — DES RÉSIDUS D'UNE ITÉRATION ANTÉRIEURE SONT ENCORE SUR DISQUE.
+  Les 12 fichiers review_queue.jsonl présents dans workspace/runs/*/ sont des
+  restes de l'ancienne implémentation avec arbitrage ; les états correspondants
+  portent encore status=waiting_review / phase=arbitrage. Le code actuel les
+  ramènera à « cancelled » au prochain démarrage (jobs.py:102-104). Sans effet
+  fonctionnel, mais trompeur à la lecture.
+
+ÉCART n°7 — DÉTAILS MINEURS.
+  - `numpy` est déclaré en dépendance (pyproject.toml:15) mais n'est importé
+    nulle part.
+  - La fabrique providers.summary() (webapp/providers.py:50-55) n'est appelée
+    par aucun chemin du pipeline : la phase « synthese » se limite à écrire le
+    Markdown. Le 4e modèle NVIDIA de synthèse est donc câblé mais inutilisé.
+  - embeddings.dim du YAML (256) n'est pas transmis au fournisseur : c'est le
+    défaut de la classe qui s'applique (retrieval/vector_index.py:29).
+  - L'extraction et les embeddings sont appelés de façon synchrone dans la boucle
+    asyncio (pipeline.py:153, 165) ; seules les relations passent par
+    score_async. Sur un fournisseur distant cela sérialise l'entonnoir.
+  - La LLM non NVIDIA est un symbole-invokable : choisir provider=openai fait
+    échouer le run dès la construction du client, avant toute phase.
+
+
+================================================================================
+8. CE QUE LE PROJET N'EST PAS
+================================================================================
+Ce n'est PAS un système sémantique. En mode local, l'extraction est lexicale,
+les embeddings sont un sac de mots haché, les relations sont un recouvrement de
+tokens. Aucune affirmation n'est vraie ou fausse : le produit ne sait pas
+« laquelle des deux propositions l'emporte ».
+
+Ce n'est PAS un outil de recherche documentaire. Il n'y a pas d'index de
+recherche, pas de BM25, pas de RRF, pas de reranker.
+
+Ce n'est PAS un produit multi-utilisateur. Pas d'authentification, pas de
+sessions, pas de rôles. À n'exposer que sur la boucle locale.
+
+Ce n'est PAS une base de données. Le registre est un JSON, le cache est un
+SQLite clé-valeur, les runs sont des dossiers. Aucune base relationnelle, aucune
+migration, aucune requête.
+
+Ce n'est PAS une plateforme de modèles. Le projet ne fournit aucun client réel
+pour OpenAI, Anthropic ou vLLM ; seul NVIDIA est câblé en HTTP, et seulement si
+la clé est présente.
+
+Ce n'est PAS un pipeline reprenable. Un run interrompu est marqué « cancelled » ;
+il n'y a ni reprise ni checkpoint. Le cache d'extraction est la seule chose qui
+survit et évite de retraiter un fichier inchangé.
+
+Ce n'est PAS complet au regard de « front end final.txt ». Cette spec décrit 19
+parties ; le dépôt en implémente l'annexe W et une version allégée de l'entonnoir.
+
+Ce n'est PAS documenté au-delà du README. Le README est court (54 lignes) et,
+comme montré en section 7, trois de ses affirmations sont fausses ou périmées.
+Le code est commentaires en français, ce qui aide ; mais il n'existe ni ADR,
+ni guide de contribution, ni contrat d'API écrit — le fichier
+artifacts/backend-contract.md annoncé n'a jamais été produit.
+
+
+================================================================================
+9. COMMANDES UTILES
+================================================================================
+Installation et lancement (README.md:9-19) :
+    uv venv && uv pip install -r requirements.txt
+    uv run uvicorn webapp.server:app --host 127.0.0.1 --port 8765
+  ou, sans venv, depuis la racine du projet :
+    python3 -m uvicorn webapp.server:app --host 127.0.0.1 --port 8765
+
+Tests (README.md:33-34, exécutés avec succès le 2026-09-30, exit 0, 71/71 verts) :
+    PYTHONPATH=. python3 -m pytest --tb=short
+
+Répertoire de travail par défaut :
+    ./workspace/sources.json          registre des sources
+    ./workspace/runs/<run_id>/       state.json, manifest.json, cards/, cards_index.json
+    ./workspace/uploads/             fichiers déposés
+    ./workspace/converted/           texte de référence des epub/pdf
+    ./workspace/cache.sqlite         mémo d'extraction partagé
+    ./workspace/server.log           journal applicatif
+
+
+================================================================================
+10. SI VOUS REPRENEZ LE PROJET — ORDRE DE PRIORITÉ
+================================================================================
+1. Trancher l'arbitrage. C'est la seule divergence de fond entre la spec et le
+   code, et la seule qui retire une capacité au produit, pas seulement du code.
+   Soit on restaure les trois routes et les deux fichiers JSONL, soit on retire
+   l'arbitrage des specs. En l'état, le produit perd des affirmations.
+2. Corriger le README (71 tests, suppression de la référence à
+   artifacts/backend-contract.md) ou produire ledit fichier — c'est le premier
+   document que lira le prochain lecteur.
+3. Réviser les tests navigateur : six onglets attendus contre cinq réels, et un
+   .last-run.json antérieur à la version actuelle du front.
+4. Calibrer les seuils du mode local, ou interdire explicitement provider=local
+   pour un usage autre que recette d'interface (section 7, écart n°5).
+5. Câbler providers.summary(), ou le retirer, et élaguer numpy des dépendances.
+6. Si une reprise est souhaitée : lestat des runs est déjà persisté
+   (workspace/runs/*/state.json) et rechargé au démarrage (jobs.py:86-105) ;
+   il manque seulement la reprise des phases, pas la infrastructure.
+
+================================================================================
+FIN DU DOCUMENT — 2 artefacts produits par opencode-4 (draft + rapport) dans
+/home/karim/.cccc/missions/m-20260930-docs-seigneur/
+================================================================================

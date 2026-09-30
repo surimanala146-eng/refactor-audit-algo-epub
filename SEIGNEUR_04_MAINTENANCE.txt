@@ -1,0 +1,228 @@
+================================================================================
+SEIGNEUR — ÉTAT DES LIEUX & GUIDE DE MAINTENANCE TECHNIQUE
+Projet : Matrice Algorithmique v2 (Annexe W - Console FastAPI)
+Chemin du projet : /home/karim/alguesss454557575/
+Auteur de l'audit : antigravity-1 (Mission m-20260930-docs-seigneur)
+Date d'audit : 30 septembre 2026
+================================================================================
+
+1. ÉTAT DU DÉPÔT GIT
+--------------------------------------------------------------------------------
+Dépôt local : /home/karim/alguesss454557575/
+Branche courante : main
+Branches distantes :
+  - origin/HEAD -> origin/main
+  - origin/arena/01a0ea01-alguesss454557575
+  - origin/main
+
+Historique git (git log --oneline -20) :
+  364af34 (HEAD -> main, origin/main, origin/HEAD) Add files via upload
+  bcfbeb2 Initial commit
+
+Statut git (git status --short) :
+   M README.md
+  ?? .gitignore
+  ?? configs/
+  ?? domain/
+  ?? extraction/
+  ?? graphify-out/
+  ?? ingestion/
+  ?? orchestration/
+  ?? package-lock.json
+  ?? package.json
+  ?? providers_impl.py
+  ?? pyproject.toml
+  ?? requirements.txt
+  ?? retrieval/
+  ?? taxonomy/
+  ?? tests/
+  ?? uv.lock
+  ?? webapp/
+
+CONSTAT CRITIQUE :
+L'implémentation actuelle de l'application est en quasi-totalité NON COMMITÉE.
+Seul README.md est tracké dans git (avec modifications non commitées). L'intégralité
+du code Python (domain/, extraction/, ingestion/, orchestration/, retrieval/,
+taxonomy/, webapp/, providers_impl.py), les tests (tests/), les configurations
+(configs/, pyproject.toml, requirements.txt, .gitignore, uv.lock) et les fichiers
+Node.js (package.json, package-lock.json) sont des fichiers non trackés ("untracked").
+Une opération destructive ou un "git clean -fd" malencontreux anéantirait toute
+l'application. Un commit initial propre de cette implémentation est impératif.
+
+
+2. ÉTAT RÉEL DES TESTS & EXÉCUTION PYTEST
+--------------------------------------------------------------------------------
+Deux environnements d'exécution ont été testés sous contraintes :
+timeout 300 env NO_COLOR=1 TERM=dumb CI=true PYTHONDONTWRITEBYTECODE=1
+
+A. Python Système (/usr/bin/python3 -m pytest -q -p no:cacheprovider) :
+   - Statut : ÉCHEC à la collecte (Exit Code = 2).
+   - Erreur :
+     ModuleNotFoundError: No module named 'mongomock'
+     Fichier coupable : tests/test_mongo.py:7 ("import mongomock" inconditionnel).
+   - Log borné : logs/pytest.log.
+
+B. Environnement Virtuel (.venv/bin/python -m pytest -q -p no:cacheprovider) :
+   - Statut : SUCCÈS TOTAL (Exit Code = 0).
+   - Décompte :
+     * 71 tests passés, 0 échec, 0 ignoré (71 passed in 4.96s).
+     * Répartition des 71 tests du répertoire tests/ :
+       - tests/test_api.py : 16 tests passés
+       - tests/test_jobs.py : 12 tests passés
+       - tests/test_mongo.py : 9 tests passés
+       - tests/test_pipeline.py : 8 tests passés
+       - tests/test_providers.py : 12 tests passés
+       - tests/test_settings.py : 5 tests passés
+       - tests/test_sources.py : 9 tests passés
+   - Note sur l'écart de décompte avec le README :
+     Le README mentionne "61 tests". Le banc réel compte 71 tests (+10 tests
+     couvrant MongoDB et les providers supplémentaires).
+   - Log borné : logs/pytest_venv.log.
+
+
+3. ÉTAT DU SERVEUR WEB & VÉRIFICATION RUNTIME (PORT 8765)
+--------------------------------------------------------------------------------
+A. Détection de conflits de port :
+   - Vérification préalable : ss -ltnp | grep 8765.
+   - Historique d'incident : un "python3 -m http.server" parasite avait précédemment
+     occupé le port 8765.
+   - Lors de l'audit initial, le port 8765 était temporairement occupé par une instance
+     uvicorn sous timeout, puis libéré ("Port 8765 free").
+
+B. Démarrage et Smoke Test FastAPI :
+   - Commande d'exécution :
+     .venv/bin/python -m uvicorn webapp.server:app --host 127.0.0.1 --port 8765
+   - Importation du module :
+     webapp.server:app s'importe sans aucune erreur sous .venv.
+   - Sonde GET /api/health (curl -s http://127.0.0.1:8765/api/health) :
+     Réponse HTTP 200 OK :
+     {
+       "ok": true,
+       "phases": [
+         "ingestion", "segmentation", "extraction", "embeddings",
+         "candidats", "relations", "clustering", "scoring",
+         "synthese", "audit", "manifest"
+       ],
+       "allowed_roots": ["/home/karim/.cccc/missions/m-20260930-docs-seigneur/logs/smoke_workspace/roots"],
+       "allowed_suffixes": [".txt", ".epub", ".pdf"],
+       "upload_multipart": true
+     }
+   - Processus arrêté proprement après test (kill). Le serveur est fonctionnel.
+
+
+4. HISTORIQUE RÉCENT & DISSOCIATION DU CODE VS SPÉCIFICATIONS
+--------------------------------------------------------------------------------
+A. Contexte historique :
+   - Au 29/09/2026, un audit avait conclu à un FAIL complet : l'application était
+     inexistante et un simple "python3 -m http.server" tournait sur le port 8765.
+   - Depuis, le code complet de la console FastAPI a été développé et validé.
+   - Le 30/09/2026, une mission explicite de refactorisation a été exécutée :
+     "Remove human arbitrage from matrice v2 (alguesss454557575): pipeline
+      auto-resolves gray-zone links, no pause, no review endpoints/UI".
+
+B. Vérification concrète dans le code (webapp/server.py, orchestration/pipeline.py) :
+   - Recherche des routes de review dans webapp/server.py : AUCUNE OCCURRENCE.
+     Les routes /api/runs/{run_id}/review, /api/runs/{run_id}/review/{item_id},
+     et /api/runs/{run_id}/resume n'existent plus dans l'API.
+   - Interface utilisateur (webapp/static/index.html) : aucune section ni panneau
+     d'arbitrage humain.
+   - Pipeline de traitement (orchestration/pipeline.py) : les liens en zone grise
+     (paires ambiguës) sont automatiquement résolus en relation "contexte"
+     (Relation.CONTEXTE) sans interruption ni mise en file d'attente d'arbitrage.
+
+C. Écart majeur avec les documents de spécification :
+   - "back end final.txt" et "front end final.txt" affirment explicitement que
+     "l'arbitrage humain est une fonctionnalité de premier rang, pas un contournement"
+     et détaillent HumanReviewQueue et les endpoints de review.
+   - "README.md" ne mentionne ni l'arbitrage humain ni sa suppression.
+   - CONCLUSION : Le développeur repreneur doit être informé que l'arbitrage humain
+     a été délibérément supprimé du code opérationnel au profit d'une résolution
+     automatique de bout en bout, bien que les fichiers de spécification initiaux
+     le présentent toujours comme central.
+
+
+5. DETTE TECHNIQUE, DÉPENDANCES & SÉCURITÉ
+--------------------------------------------------------------------------------
+A. TODO / FIXME :
+   - Aucun marqueur TODO ou FIXME dans le code source Python applicatif.
+   - Code propre et documenté avec typage moderne (Python 3.11+ / __future__.annotations).
+
+B. Dépendances non utilisées (requirements.txt / pyproject.toml) :
+   - "numpy>=1.26" : Déclaré dans requirements.txt et pyproject.toml, mais jamais
+     importé ni utilisé dans l'arborescence Python du projet.
+   - "ebooklib" et "beautifulsoup4" : Utilisés dans ingestion/loader.py (conversion EPUB).
+   - "pymupdf" (fitz) : Utilisé dans ingestion/loader.py (extraction PDF).
+   - "pyyaml" : Utilisé dans orchestration/pipeline.py (lecture de configs/pipeline.yaml).
+
+C. Rôle réel de package.json & node_modules :
+   - package.json définit devDependencies : "@playwright/test": "^1.55.1", "puppeteer": "^25.12.0".
+   - tests/browser-ui.spec.js et tests/puppeteer-ui.mjs sont des scripts de tests E2E.
+   - "scripts": {"test": "echo \"Error: no test specified\" && exit 1"}.
+   - L'interface réelle est un unique fichier HTML/JS statique (webapp/static/index.html)
+     servi directement par FastAPI. Le tooling Node.js ne participe à aucun build
+     et sert uniquement à d'éventuels tests navigateurs headless.
+
+D. Analyse du module MongoDB (retrieval/mongo_store.py & tests/test_mongo.py) :
+   - retrieval/mongo_store.py fournit MongoVectorStore (stockage d'embeddings).
+   - Il n'est activé QUE si provider="mongodb" dans la configuration (webapp/providers.py:27).
+   - Par défaut, provider="local" (DeterministicHashEmbedding). MongoDB n'est donc
+     pas sollicité en utilisation normale.
+   - Fragilité dans tests/test_mongo.py : l'importation directe de mongomock à la ligne 7
+     provoque un échec immédiat de pytest sous l'environnement système sans venv.
+
+E. Fichiers obsolètes ou orphelins :
+   - "back end final.txt" et "front end final.txt" : documents de travail statiques
+     non synchronisés avec l'état réel du code (notamment sur l'arbitrage humain).
+   - "graphify-out/" : artefacts d'indexation de graphe tiers présents à la racine.
+   - "matrice_v2_console.egg-info/" : résidu de build local.
+   - "workspace/" : contient cache.sqlite (80 Ko), sources.json et d'anciens runs
+     (workspace/runs/*). Ignoré par .gitignore mais présent sur disque.
+
+F. Points de sécurité (Anti-traversal & Upload) :
+   - Racines autorisées (webapp/settings.py) :
+     Par défaut, allowed_roots inclut (Path.home() / "Downloads", Path("./workspace/uploads")).
+     Dans un environnement utilisateur où ~/Downloads héberge des répertoires sensibles
+     (ex. frontière de production ~/Downloads/Newfo/), la fonction scan_folder
+     (webapp/sources.py) permet un scan récursif (rglob) de tout le dossier Downloads.
+   - Upload de fichiers (webapp/server.py) :
+     L'endpoint POST /api/sources/upload effectue "data = await f.read()" avant de vérifier
+     la taille maximale ("len(data) > limit"), ce qui charge la totalité du payload
+     en mémoire RAM avant rejet éventuel (vulnérabilité DoS par épuisement mémoire).
+
+
+6. RECOMMANDATIONS DE MAINTENANCE PRIORITAIRES (TOP 5 CLASSÉ)
+--------------------------------------------------------------------------------
+1. COMMITTER ET VERSIONNER L'ENSEMBLE DU CODE DANS GIT :
+   - Fichiers cibles : domain/, extraction/, ingestion/, orchestration/, retrieval/,
+     taxonomy/, webapp/, tests/, configs/, pyproject.toml, requirements.txt, .gitignore.
+   - Risque : Perte totale et irrémédiable du code en cas de manipulation git standard.
+   - Action : Créer une branche propre ou committer sur main avec un message explicite
+     "feat: implémentation complète de la console web matrice v2 sans arbitrage".
+
+2. ALIGNER LA DOCUMENTATION (README / SPECS) AVEC LE CODE RÉEL :
+   - Fichiers cibles : README.md, mise au point sur back end final.txt.
+   - Action : Documenter formellement dans le README la suppression de l'arbitrage
+     humain au profit de la résolution automatique des liens en zone grise ("contexte").
+     Mettre à jour le nombre réel de tests (71 au lieu de 61).
+
+3. ROBUSTIFIER LA SUITE DE TESTS PYTEST HORS VENV :
+   - Fichier cible : tests/test_mongo.py.
+   - Action : Remplacer l'import inconditionnel "import mongomock" par :
+     mongomock = pytest.importorskip("mongomock")
+     Permet d'exécuter la suite complète des tests de base même sans mongomock installé.
+
+4. NETTOYER LES DÉPENDANCES ET ISOLER LE TOOLING NODE.JS :
+   - Fichiers cibles : requirements.txt, pyproject.toml, package.json.
+   - Action : Supprimer "numpy" des dépendances Python. Documenter ou encapsuler
+     les scripts Puppeteer/Playwright dans package.json ("npm test" -> commande valide)
+     pour éviter la confusion entre stack Python et stack Node.
+
+5. SÉCURISER LES RACINES DE SCAN ET L'ENDPOINT D'UPLOAD :
+   - Fichiers cibles : webapp/settings.py, webapp/server.py.
+   - Action :
+     a) Restreindre par défaut allowed_roots au seul dossier workspace local
+        (ex: Path("./workspace/uploads")) et ne pas inclure Path.home() / "Downloads"
+        par défaut sans configuration explicite via ALGUESS_WEBAPP_ROOTS.
+     b) Remplacer "await f.read()" par une lecture en flux (chunk-by-chunk) avec
+        interruption immédiate dès dépassement de max_upload_mb.
+================================================================================

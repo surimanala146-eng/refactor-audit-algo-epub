@@ -1,0 +1,37 @@
+================================================================================
+PASSATION PROJET — SEIGNEUR
+Projet : /home/karim/alguesss454557575/ — « matrice algorithmique v2 » (annexe W)
+Date : 2026-09-30 — préparé par l'équipe CCCC (agy-1 foreman + 4 workers)
+================================================================================
+
+ORDRE DE LECTURE
+----------------
+01  SEIGNEUR_01_PRESENTATION.txt   — qu'est-ce que le projet, parcours utilisateur,
+                                     fonctionnalités, écarts spec↔réel (opencode-4)
+02  SEIGNEUR_02_PREPARATION.txt    — installation, lancement, variables d'env,
+                                     tests : toutes les commandes ont été exécutées
+                                     pour de vrai (kilocode-1)
+03  SEIGNEUR_03_TECHNOLOGIE.txt    — architecture : modules, modèle de données,
+                                     pipeline, 17 routes API réelles (codex-2)
+04  SEIGNEUR_04_MAINTENANCE.txt    — état git, état des tests mesuré, dette,
+                                     risques, top 5 recommandations (antigravity-1)
+
+FAITS VÉRIFIÉS AU 30/09/2026 (pas des affirmations de README)
+-----------------------------------------------------------
+- Tests : 71 passed / 0 failed dans .venv (Python 3.14.6). Le README dit 61 — faux.
+- Serveur : FastAPI sain sur http://127.0.0.1:8765 (GET /api/health → 200).
+- Routes : 17 implémentées dans webapp/server.py. Les 3 routes d'arbitrage
+  (review/resume) ont été RETIRÉES du code — mais les specs « back end final.txt »
+  et le README les décrivent encore comme fonctionnalité de premier rang.
+  → DÉCISION À PRENDRE : restaurer l'arbitrage ou le retirer des specs.
+- Git : l'implémentation actuelle est quasi entièrement NON COMMITÉE
+  (2 commits historiques seulement ; tout le code reconstruit est untracked).
+- Piège : SETTINGS figé à l'import (webapp/settings.py:46) — définir les
+  variables ALGUESS_WEBAPP_* AVANT le lancement, sinon 403 silencieux sur scan.
+- README obsolète : renvoie vers artifacts/backend-contract.md (inexistant) ;
+  les tests navigateur attendent un onglet « review » supprimé.
+- Python système : pytest échoue (mongomock absent) — utiliser .venv.
+
+PREUVES : les rapports d'exécution et logs de chaque agent sont dans
+/home/karim/.cccc/missions/m-20260930-docs-seigneur/ (reports/ + logs/).
+================================================================================

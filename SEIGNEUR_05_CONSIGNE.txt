@@ -1,0 +1,64 @@
+================================================================================
+CONSIGNE POUR SEIGNEUR — OBJECTIF : MATRICE EN UN COUP, ZÉRO ÉTAPE HUMAINE
+Projet : /home/karim/alguesss454557575/ — date : 2026-09-30
+================================================================================
+
+CE QUE VEUT LE CLIENT (verbatim simplifié)
+------------------------------------------
+« Tu mets les livres, et à la sortie on a le résultat de la matrice.
+  En une seule fois. Pas de demande à des humains, pas plusieurs pages.
+  Simple. »
+
+ÉTAT RÉEL DU CODE (vérifié le 30/09 — ne pas repartir des specs)
+---------------------------------------------------------------
+- Le pipeline orchestration/pipeline.py est DÉJÀ en une passe :
+  « Entonnoir ingestion -> manifest en une passe, sans arbitrage humain »
+  (pipeline.py:101). pending_review est toujours False.
+- Les routes d'arbitrage (review/resume) ont été SUPPRIMÉES de
+  webapp/server.py — aucune étape humaine ne bloque le backend.
+- Ce qui reste complexe : l'INTERFACE. 5 onglets
+  (sources / run / monitor / cards / manifest) obligent l'utilisateur
+  à naviguer entre plusieurs écrans pour obtenir son résultat.
+- Il n'existe AUCUNE entrée one-shot : ni commande CLI unique,
+  ni page unique « déposer → lancer → résultat ».
+
+TRAVAIL DEMANDÉ
+---------------
+1. COMMANDE ONE-SHOT (priorité absolue)
+   Une seule commande qui prend un dossier de .txt et produit le résultat :
+       python -m orchestration <dossier_livres> <dossier_sortie>
+   Sortie : manifest.json + fiches .md dans <dossier_sortie>.
+   Aucune question posée, aucune config obligatoire, aucune attente
+   d'entrée clavier. Les seuils de configs/pipeline.yaml servent de défauts.
+
+2. WEBAPP UNE SEULE PAGE (si l'interface web est conservée)
+   Une seule vue qui enchaîne visuellement :
+   - zone de dépôt/sélection du dossier de livres,
+   - UN bouton « Lancer »,
+   - progression en direct (les événements SSE existent déjà),
+   - résultats (fiches + manifest + export.zip) affichés
+     automatiquement à la fin, sans changer d'onglet.
+   Retirer ou rabattre les onglets devenus inutiles.
+
+3. ZÉRO INTERACTION HUMAINE — invariant
+   Nulle part le pipeline ne doit attendre une décision, une validation
+   ou une saisie. En cas d'ambiguïté : règle automatique documentée,
+   jamais une pause « en attente d'humain ».
+
+4. SIMPLICITÉ DE SORTIE
+   Le résultat visible = les fiches + le manifest, ouvrables
+   directement. Un zip téléchargeable suffit pour l'export.
+
+CRITÈRE D'ACCEPTATION (test que le client fera)
+---------------------------------------------
+On dépose N fichiers .txt dans un dossier → on lance UNE commande
+(ou UN clic) → on obtient le dossier de résultats de la matrice.
+Aucune question intermédiaire, aucun deuxième écran obligatoire.
+
+RÉFÉRENCES
+----------
+- Pipeline : orchestration/pipeline.py (SemanticEvidencePipeline)
+- Routes actuelles : webapp/server.py (17 routes)
+- Seuils : configs/pipeline.yaml
+- État & dette : SEIGNEUR_04_MAINTENANCE.txt (même dossier)
+================================================================================

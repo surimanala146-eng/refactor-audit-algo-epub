@@ -1,0 +1,148 @@
+TECHNOLOGIE ET ARCHITECTURE — état du code au 2026-09-30
+
+Périmètre et sources
+--------------------
+Ce document décrit le dépôt tel qu'il est exécuté, non la cible décrite par les
+spécifications. Sources principales : README.md, pyproject.toml,
+configs/pipeline.yaml, webapp/server.py, webapp/jobs.py, webapp/adapter.py,
+orchestration/pipeline.py et domain/models.py. La spécification W.1 est dans
+« back end final.txt », lignes 14–37 ; elle est comparée explicitement ci-dessous.
+
+Stack
+-----
+- Python >= 3.11, package « matrice-v2-console » 0.2.0 (pyproject.toml).
+- Web : FastAPI >=0.115, Uvicorn[standard] >=0.30, Pydantic >=2.7 ; une page
+  webapp/static/index.html en JavaScript natif, sans étape de build (README.md,
+  pyproject.toml).
+- Données locales : registre sources.json, artefacts par run et cache SQLite
+  partagé (webapp/sources.py, webapp/adapter.py, orchestration/pipeline.py).
+- Calcul : numpy, PyYAML ; import EPUB/PDF via ebooklib, BeautifulSoup et PyMuPDF.
+  pymongo est déclaré mais seulement activé par provider=mongodb. Tests : pytest
+  >=8 et httpx/mongomock optionnels (requirements.txt, pyproject.toml).
+
+Carte des modules
+-----------------
+- domain/models.py : Source, Claim, Embedding, Relation, ValidationState,
+  Evidence, Card, Score, Family et slugify().
+- ingestion/loader.py : construit Source, calcule/fixe le SHA256 et recharge le
+  texte avec re-vérification ; segmenter.py prépare le texte de référence,
+  chapitres et phrases (appelés par pipeline.py et /api/evidence).
+- extraction/claim_extractor.py : NullExtractionModel. C'est une baseline
+  lexicale : phrases de 40..max_chars, min_words, jusqu'à per_chapter ; pas de
+  modèle ML ni de sens éditorial (README.md, claim_extractor.py).
+- retrieval/vector_index.py : DeterministicHashEmbedding, sac de mots haché,
+  dimension 256 et L2-normalisation ; cosine/tokenize/mean_vector. Ce n'est pas
+  un embedding sémantique. retrieval/mongo_store.py est réellement selectable
+  par provider=mongodb (webapp/providers.py) : il exige MONGODB_URI, persiste
+  les vecteurs dans matrice_v2.embeddings et retombe seulement sur le calcul
+  hash local pour fabriquer le vecteur, pas sur une recherche vectorielle distante.
+- taxonomy/family_classifier.py : FamilyClassifier compare le centroïde aux six
+  prototypes manuscrits FAM1..FAM6. FAM? est retourné sous confiance 0,60.
+- orchestration/pipeline.py : PipelineConfig lit le YAML et SemanticEvidencePipeline
+  exécute la passe complète ; cache SQLite best-effort interne (_Cache).
+- webapp/ : settings (environnement et racines), sources (registre/import),
+  jobs (état asynchrone/SSE), adapter (assemblage pipeline), providers (fabrique),
+  server (API). providers_impl.py contient le relationneur lexical et les clients
+  NVIDIA ; configs/pipeline.yaml centralise les seuils ; tests/ couvre settings,
+  sources, providers, pipeline, jobs et API (README.md).
+
+Modèle de données
+-----------------
+Source = book_id, author, title, path, sha256_bytes, n_bytes, n_chars. Claim =
+prop_id, book_id, chapitre, text, start, end (positions dans le texte de
+référence). Relation vaut soutient|contredit|contexte|sans_rapport. ValidationState
+réellement disponible ne vaut que publie|elimine : il n'existe pas d'état
+a_arbitrer dans domain/models.py. Evidence conserve source, claim, chapitre,
+span, texte, confiance, source_sentier et relation_finale. Card agrège slug,
+titre, Family(code/confidence), Score(palier/n_sources/confiance_moyenne/
+n_preuves), état et preuves (domain/models.py).
+
+Pipeline réel et seuils
+-----------------------
+Ordre exact (PHASES dans jobs.py et pipeline.py) : ingestion, segmentation,
+extraction, embeddings, candidats, relations, clustering, scoring, synthese,
+audit, manifest. Pour chaque Source, le loader revalide d'abord SHA256 puis
+prepare_book produit la référence et les chapitres. Les claims sont cacheés par
+book_id+hash. Les vecteurs sont calculés, les paires inter-livres sont retenues
+au cosinus >= 0,25, puis le relationneur est appelé avec une concurrence par
+défaut de 8. Les liens soutient/contredit de confiance >=0,5 forment les clusters.
+
+configs/pipeline.yaml fixe : candidat_cos_min=0,25 ; bande grise NLI
+[0,35 ; 0,65[ ; confiance_publication=0,60 ; min_sources_publication=2 ;
+paliers P3=2, P4=3, P5+=5 ; extraction min_words=8, max_chars=400,
+par_chapitre=4, max_claims_par_livre=40 ; embeddings.dim=256. Une confiance dans
+la bande grise est automatiquement convertie en CONTEXTE, annotée
+zone_grise_auto, exclue du clustering et donc des fiches. L'audit élimine une
+fiche sous 2 sources, sous 0,60 de confiance moyenne, ou avec un span invalide.
+
+API réellement implémentée
+--------------------------
+webapp/server.py expose GET / ; GET /api/health ; POST /api/sources/scan ;
+POST /api/sources/upload (ou 503 sans python-multipart) ; GET /api/sources ;
+PATCH et DELETE /api/sources/{book_id} ; POST /api/runs ; GET /api/runs ;
+GET /api/runs/{run_id} ; POST /api/runs/{run_id}/cancel ;
+GET /api/runs/{run_id}/events (SSE) ; GET /api/runs/{run_id}/cards ;
+GET /api/runs/{run_id}/cards/{slug} ; GET /api/evidence/{book_id} ;
+GET /api/runs/{run_id}/manifest ; GET /api/runs/{run_id}/export.zip.
+
+Écarts W.1 / code — importants
+--------------------------------
+W.1 liste aussi GET /api/runs/{run_id}/review, POST
+/api/runs/{run_id}/review/{item_id} et POST /api/runs/{run_id}/resume
+(back end final.txt:29–31). Elles sont absentes de server.py. En conséquence,
+le code ne crée ni review_queue.jsonl ni decisions.jsonl, ne connaît pas l'état
+waiting_review, et n'a pas la phase « arbitrage » : PHASES saute directement de
+relations à clustering. adapter.run_full() appelle p.run() en une fois et
+retourne pending_review=False ; il n'existe pas run_resume(). L'export ZIP ne
+peut donc pas inclure de file d'arbitrage. C'est une divergence fonctionnelle,
+pas seulement une route oubliée : l'arbitrage humain, central dans W.1/W.5,
+a été retiré et les cas gris sont résolus automatiquement en contexte.
+
+Autres écarts observables : W.1 présente le scan/upload comme .txt ; le code
+accepte .txt, .epub et .pdf (settings.py). server.py enrichit /api/health avec
+allowed_suffixes et upload_multipart. Les fiches servies excluent les ELIMINE,
+mais il n'y a pas de statut A_ARBITRER à filtrer. La page index.html livrée par
+le code doit donc être considérée comme l'interface sans revue, non celle du
+bloc de spécification W.6 qui contenait un onglet de revue.
+
+Providers et défaillances explicites
+------------------------------------
+En local, extraction=NullExtractionModel, embedding=DeterministicHashEmbedding,
+relation=LexicalOverlapRelation et family=FamilyClassifier (webapp/providers.py).
+LexicalOverlapRelation calcule une moyenne Jaccard/couverture : <0,08 donne
+sans_rapport ; [0,35;0,65[ contexte ; au-delà soutient, sauf marqueur de
+négation détecté qui donne contredit (providers_impl.py). LLMExtraction,
+EmbeddingAPI et NLIRelation sont des factories qui lèvent ProviderIndisponible :
+aucun appel distant fictif. provider=nvidia utilise quatre clients HTTP réels,
+exige NVIDIA_API_KEY et échoue explicitement si la clé/API manque. provider=mongodb
+exige MONGODB_URI. Ces échecs sont le comportement intentionnel de la baseline.
+
+Cycle de vie d'un run
+---------------------
+POST /api/runs valide les book_ids, crée RunState et son répertoire, puis
+JobManager démarre une tâche asyncio. ProgressReporter publie progression/logs
+sur EventBus ; GET events envoie hello, les événements, un keep-alive de 15 s
+et final, puis désabonne la queue. cancel() pose l'Event puis annule la tâche ;
+_wrap passe à cancelled/failed/done, écrit state.json et émet final. Au redémarrage,
+jobs.py restaure state.json mais convertit pending/running/waiting_review en
+cancelled. run_full écrit les cartes Markdown + preuves JSON, cards_index.json,
+manifest.json ; cards/card/evidence/manifest/export les lisent. /api/evidence
+recharge et revalide le SHA256 avant de retourner le contexte. Il n'existe ni
+pause de revue ni reprise : cancel est la seule interruption API.
+
+Points d'extension pour le repreneur
+------------------------------------
+1. Réintroduire l'arbitrage comme frontière relations→clustering : état
+waiting_review, review_queue.jsonl, décisions persistées, trois routes W.1,
+run_until_review/run_resume et ValidationState.A_ARBITRER ; mettre à jour tests
+et index.html ensemble.
+2. Remplacer les baselines locales par des implémentations sémantiques tout en
+gardant les Protocols de pipeline.py, les erreurs explicites et les manifests.
+3. Rendre PipelineConfig appliqué aux constructeurs : les paramètres YAML
+d'extraction et embeddings.dim sont documentés mais l'adapter instancie les
+baselines sans leur transmettre ces valeurs.
+4. Si MongoDB est conservé, documenter son rôle : persistance/cache d'embeddings
+hash et recherche brute-force, non moteur sémantique ; prévoir index et gestion
+de cycle de vie du client.
+5. Conserver les invariants de preuve : SHA256 à l'import puis au clic, positions
+dans la référence normalisée, et publication seulement après portes d'audit.
